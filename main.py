@@ -72,8 +72,19 @@ Text:
 def generate_quiz(text: str, question_count: int):
     prompt = f"""
 Create {question_count} quiz questions from the following study note.
-Use clear language.
-For each question, include the correct answer.
+
+Rules:
+- Do not write an introduction.
+- Number the questions.
+- After each question, write the correct answer.
+- Keep the questions clear and short.
+- Use this exact format:
+
+Question 1:
+Answer:
+
+Question 2:
+Answer:
 
 Text:
 {text}
