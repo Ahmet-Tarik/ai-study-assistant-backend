@@ -26,6 +26,11 @@ class TextSummarizeRequest(BaseModel):
     text: str
 
 
+class TextQuizRequest(BaseModel):
+    text: str
+    question_count: int = 5
+
+
 def get_db():
     db = SessionLocal()
     try:
@@ -38,6 +43,37 @@ def generate_summary(text: str):
     prompt = f"""
 Summarize the following study note in a clear and short way.
 Use simple language.
+
+Text:
+{text}
+"""
+
+    try:
+        response = requests.post(
+            "http://localhost:11434/api/generate",
+            json={
+                "model": "qwen2.5:7b",
+                "prompt": prompt,
+                "stream": False
+            },
+            timeout=120
+        )
+        response.raise_for_status()
+    except requests.RequestException as error:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ollama request failed: {str(error)}"
+        )
+
+    data = response.json()
+    return data.get("response", "")
+
+
+def generate_quiz(text: str, question_count: int):
+    prompt = f"""
+Create {question_count} quiz questions from the following study note.
+Use clear language.
+For each question, include the correct answer.
 
 Text:
 {text}
@@ -78,6 +114,17 @@ def summarize_text(request: TextSummarizeRequest):
 
     return {
         "summary": summary,
+        "original_text_length": len(request.text)
+    }
+
+
+@app.post("/ai/generate-quiz")
+def generate_quiz_from_text(request: TextQuizRequest):
+    quiz = generate_quiz(request.text, request.question_count)
+
+    return {
+        "quiz": quiz,
+        "question_count": request.question_count,
         "original_text_length": len(request.text)
     }
 
@@ -126,6 +173,24 @@ def summarize_note_by_id(note_id: int, db: Session = Depends(get_db)):
         "note_id": note.id,
         "title": note.title,
         "summary": summary,
+        "original_text_length": len(note.content)
+    }
+
+
+@app.post("/notes/{note_id}/generate-quiz")
+def generate_quiz_from_note(note_id: int, question_count: int = 5, db: Session = Depends(get_db)):
+    note = db.query(Note).filter(Note.id == note_id).first()
+
+    if note is None:
+        raise HTTPException(status_code=404, detail="Note not found")
+
+    quiz = generate_quiz(note.content, question_count)
+
+    return {
+        "note_id": note.id,
+        "title": note.title,
+        "quiz": quiz,
+        "question_count": question_count,
         "original_text_length": len(note.content)
     }
 
