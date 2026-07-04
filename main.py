@@ -1,7 +1,9 @@
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import requests
+from io import BytesIO
+from pypdf import PdfReader
 
 from database import SessionLocal, engine
 from models import Base, Note
@@ -111,6 +113,22 @@ Text:
     return data.get("response", "")
 
 
+def extract_text_from_pdf_content(file_content: bytes):
+    try:
+        pdf_reader = PdfReader(BytesIO(file_content))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Could not read PDF file")
+
+    extracted_text = ""
+
+    for page in pdf_reader.pages:
+        page_text = page.extract_text()
+        if page_text:
+            extracted_text += page_text + "\n"
+
+    return pdf_reader, extracted_text
+
+
 @app.get("/health")
 def health_check():
     return {
@@ -137,6 +155,46 @@ def generate_quiz_from_text(request: TextQuizRequest):
         "quiz": quiz,
         "question_count": request.question_count,
         "original_text_length": len(request.text)
+    }
+
+
+@app.post("/files/extract-pdf-text")
+async def extract_pdf_text(file: UploadFile = File(...)):
+    if file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+
+    file_content = await file.read()
+
+    pdf_reader, extracted_text = extract_text_from_pdf_content(file_content)
+
+    return {
+        "filename": file.filename,
+        "page_count": len(pdf_reader.pages),
+        "text_length": len(extracted_text),
+        "text": extracted_text
+    }
+
+
+
+@app.post("/files/summarize-pdf")
+async def summarize_pdf(file: UploadFile = File(...)):
+    if file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+
+    file_content = await file.read()
+
+    pdf_reader, extracted_text = extract_text_from_pdf_content(file_content)
+
+    if not extracted_text.strip():
+        raise HTTPException(status_code=400, detail="No text could be extracted from this PDF")
+
+    summary = generate_summary(extracted_text)
+
+    return {
+        "filename": file.filename,
+        "page_count": len(pdf_reader.pages),
+        "text_length": len(extracted_text),
+        "summary": summary
     }
 
 
