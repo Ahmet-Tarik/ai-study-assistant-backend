@@ -34,22 +34,13 @@ def get_db():
         db.close()
 
 
-@app.get("/health")
-def health_check():
-    return {
-        "status": "ok",
-        "project": "AI Study Assistant"
-    }
-
-
-@app.post("/ai/summarize")
-def summarize_text(request: TextSummarizeRequest):
+def generate_summary(text: str):
     prompt = f"""
 Summarize the following study note in a clear and short way.
 Use simple language.
 
 Text:
-{request.text}
+{text}
 """
 
     try:
@@ -70,9 +61,23 @@ Text:
         )
 
     data = response.json()
+    return data.get("response", "")
+
+
+@app.get("/health")
+def health_check():
+    return {
+        "status": "ok",
+        "project": "AI Study Assistant"
+    }
+
+
+@app.post("/ai/summarize")
+def summarize_text(request: TextSummarizeRequest):
+    summary = generate_summary(request.text)
 
     return {
-        "summary": data.get("response", ""),
+        "summary": summary,
         "original_text_length": len(request.text)
     }
 
@@ -106,6 +111,23 @@ def get_note_by_id(note_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Note not found")
 
     return note
+
+
+@app.post("/notes/{note_id}/summarize")
+def summarize_note_by_id(note_id: int, db: Session = Depends(get_db)):
+    note = db.query(Note).filter(Note.id == note_id).first()
+
+    if note is None:
+        raise HTTPException(status_code=404, detail="Note not found")
+
+    summary = generate_summary(note.content)
+
+    return {
+        "note_id": note.id,
+        "title": note.title,
+        "summary": summary,
+        "original_text_length": len(note.content)
+    }
 
 
 @app.put("/notes/{note_id}")
