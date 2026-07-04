@@ -1,17 +1,20 @@
+from io import BytesIO
+
+import requests
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
-import requests
-from io import BytesIO
 from pypdf import PdfReader
+from sqlalchemy.orm import Session
 
 from database import SessionLocal, engine
 from models import Base, Note
 
+OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_MODEL = "qwen2.5:7b"
+
 app = FastAPI(title="AI Study Assistant Backend")
 
 Base.metadata.create_all(bind=engine)
-
 
 
 class NoteCreate(BaseModel):
@@ -41,6 +44,28 @@ def get_db():
         db.close()
 
 
+def call_ollama(prompt: str):
+    try:
+        response = requests.post(
+            OLLAMA_URL,
+            json={
+                "model": OLLAMA_MODEL,
+                "prompt": prompt,
+                "stream": False,
+            },
+            timeout=120,
+        )
+        response.raise_for_status()
+    except requests.RequestException as error:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ollama request failed: {str(error)}",
+        )
+
+    data = response.json()
+    return data.get("response", "")
+
+
 def generate_summary(text: str):
     prompt = f"""
 Summarize the following study note in a clear and short way.
@@ -49,26 +74,7 @@ Use simple language.
 Text:
 {text}
 """
-
-    try:
-        response = requests.post(
-            "http://localhost:11434/api/generate",
-            json={
-                "model": "qwen2.5:7b",
-                "prompt": prompt,
-                "stream": False
-            },
-            timeout=120
-        )
-        response.raise_for_status()
-    except requests.RequestException as error:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Ollama request failed: {str(error)}"
-        )
-
-    data = response.json()
-    return data.get("response", "")
+    return call_ollama(prompt)
 
 
 def generate_quiz(text: str, question_count: int):
@@ -91,26 +97,7 @@ Answer:
 Text:
 {text}
 """
-
-    try:
-        response = requests.post(
-            "http://localhost:11434/api/generate",
-            json={
-                "model": "qwen2.5:7b",
-                "prompt": prompt,
-                "stream": False
-            },
-            timeout=120
-        )
-        response.raise_for_status()
-    except requests.RequestException as error:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Ollama request failed: {str(error)}"
-        )
-
-    data = response.json()
-    return data.get("response", "")
+    return call_ollama(prompt)
 
 
 def extract_text_from_pdf_content(file_content: bytes):
@@ -133,7 +120,7 @@ def extract_text_from_pdf_content(file_content: bytes):
 def health_check():
     return {
         "status": "ok",
-        "project": "AI Study Assistant"
+        "project": "AI Study Assistant",
     }
 
 
@@ -143,7 +130,7 @@ def summarize_text(request: TextSummarizeRequest):
 
     return {
         "summary": summary,
-        "original_text_length": len(request.text)
+        "original_text_length": len(request.text),
     }
 
 
@@ -154,7 +141,7 @@ def generate_quiz_from_text(request: TextQuizRequest):
     return {
         "quiz": quiz,
         "question_count": request.question_count,
-        "original_text_length": len(request.text)
+        "original_text_length": len(request.text),
     }
 
 
@@ -164,16 +151,14 @@ async def extract_pdf_text(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
 
     file_content = await file.read()
-
     pdf_reader, extracted_text = extract_text_from_pdf_content(file_content)
 
     return {
         "filename": file.filename,
         "page_count": len(pdf_reader.pages),
         "text_length": len(extracted_text),
-        "text": extracted_text
+        "text": extracted_text,
     }
-
 
 
 @app.post("/files/summarize-pdf")
@@ -182,7 +167,6 @@ async def summarize_pdf(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
 
     file_content = await file.read()
-
     pdf_reader, extracted_text = extract_text_from_pdf_content(file_content)
 
     if not extracted_text.strip():
@@ -194,7 +178,7 @@ async def summarize_pdf(file: UploadFile = File(...)):
         "filename": file.filename,
         "page_count": len(pdf_reader.pages),
         "text_length": len(extracted_text),
-        "summary": summary
+        "summary": summary,
     }
 
 
@@ -208,7 +192,7 @@ def get_notes(db: Session = Depends(get_db)):
 def create_note(note: NoteCreate, db: Session = Depends(get_db)):
     new_note = Note(
         title=note.title,
-        content=note.content
+        content=note.content,
     )
 
     db.add(new_note)
@@ -216,7 +200,6 @@ def create_note(note: NoteCreate, db: Session = Depends(get_db)):
     db.refresh(new_note)
 
     return new_note
-
 
 
 @app.get("/notes/{note_id}")
@@ -242,7 +225,7 @@ def summarize_note_by_id(note_id: int, db: Session = Depends(get_db)):
         "note_id": note.id,
         "title": note.title,
         "summary": summary,
-        "original_text_length": len(note.content)
+        "original_text_length": len(note.content),
     }
 
 
@@ -260,7 +243,7 @@ def generate_quiz_from_note(note_id: int, question_count: int = 5, db: Session =
         "title": note.title,
         "quiz": quiz,
         "question_count": question_count,
-        "original_text_length": len(note.content)
+        "original_text_length": len(note.content),
     }
 
 
@@ -292,5 +275,5 @@ def delete_note(note_id: int, db: Session = Depends(get_db)):
 
     return {
         "message": "Note deleted successfully",
-        "deleted_note": note
+        "deleted_note": note,
     }
