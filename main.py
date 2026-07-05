@@ -66,6 +66,9 @@ def call_ollama(prompt: str):
                 "model": OLLAMA_MODEL,
                 "prompt": prompt,
                 "stream": False,
+                "options": {
+                    "temperature": 0.2,
+                },
             },
             timeout=120,
         )
@@ -115,21 +118,40 @@ Text:
 
 
 def generate_chat_answer(message: str, context: str):
+    turkish_characters = "çğıöşüÇĞİÖŞÜ"
+    turkish_keywords = ["basit", "türkçe", "anlat", "açıkla", "sadece", "kısmı"]
+
+    message_lower = message.lower()
+    should_answer_turkish = any(character in message for character in turkish_characters) or any(
+        keyword in message_lower for keyword in turkish_keywords
+    )
+
+    answer_language = "Turkish" if should_answer_turkish else "English"
+
     prompt = f"""
 You are an AI study assistant.
-Answer only using the provided study material.
-Use the same language as the user's question.
-Use simple, clean, and clear language.
-Do not use unrelated symbols, Chinese/Japanese characters, or random text.
-Do not add information that is not supported by the study material.
-If the study material does not include enough information, say that clearly.
-Keep the answer focused on the user's question.
+
+CRITICAL OUTPUT RULES:
+- Answer language: {answer_language}.
+- If answer language is Turkish, write ONLY with Turkish words and Latin alphabet.
+- Do NOT use Chinese, Japanese, Korean, Arabic, Cyrillic, or any non-Latin characters.
+- Do NOT translate any sentence into Chinese, Japanese, Korean, Arabic, or Cyrillic.
+- Do NOT output random symbols or broken characters.
+- Keep the answer short, focused, and easy to understand.
+
+CONTENT RULES:
+- Use only the provided study material as context.
+- Do not add information that is not supported by the study material.
+- If the study material does not include enough information, say that clearly.
+- Answer the user's exact question.
 
 Study material:
 {context}
 
 User question:
 {message}
+
+Final answer in {answer_language}:
 """
     return call_ollama(prompt)
 
