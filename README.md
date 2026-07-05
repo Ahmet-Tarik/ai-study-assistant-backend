@@ -1,13 +1,17 @@
+
 # AI Study Assistant Backend
 
-AI Study Assistant Backend is a FastAPI-based backend project for managing study notes, uploading PDF study materials, and chatting with those materials using a local LLM through Ollama.
+AI Study Assistant Backend is a FastAPI-based backend for managing study notes, uploading PDF study materials, organizing sources into folders, and chatting with those materials using a local LLM through Ollama.
 
-The backend supports notes, PDF documents, AI summarization, quiz generation, and contextual AI chat. It is built as a practical backend and AI integration project to improve software engineering skills.
+The project is built as a practical backend and AI integration project. It includes CRUD operations, PDF text extraction, contextual AI chat, AI summaries, quiz generation, and folder-based organization for notes and PDF documents.
 
 ## Features
 
 - Create, read, update, and delete study notes
-- Store notes in a local SQLite database
+- Create and delete folders for organizing study sources
+- Assign notes and PDF documents to folders
+- Move saved PDF documents between folders
+- Store notes, folders, and PDF documents in a local SQLite database
 - Generate AI-powered summaries from plain text
 - Generate AI-powered quizzes from plain text
 - Summarize saved notes by note ID
@@ -17,9 +21,12 @@ The backend supports notes, PDF documents, AI summarization, quiz generation, an
 - Summarize uploaded PDF files
 - Save uploaded PDFs as documents in the database
 - List saved PDF documents
+- Delete saved PDF documents
 - Chat with saved PDF documents using extracted PDF text as context
 - Use a local LLM through Ollama
+- English-first AI responses for cleaner academic output
 - Interactive API documentation with Swagger UI
+- CORS support for the local React frontend
 
 ## Tech Stack
 
@@ -44,6 +51,11 @@ POST   /ai/chat
 POST   /files/extract-pdf-text
 POST   /files/summarize-pdf
 
+GET    /folders
+POST   /folders
+PUT    /folders/{folder_id}
+DELETE /folders/{folder_id}
+
 GET    /notes
 POST   /notes
 GET    /notes/{note_id}
@@ -56,8 +68,10 @@ POST   /notes/{note_id}/chat
 POST   /documents/upload-pdf
 GET    /documents
 GET    /documents/{document_id}
+PUT    /documents/{document_id}/folder
 POST   /documents/{document_id}/summarize
 POST   /documents/{document_id}/chat
+DELETE /documents/{document_id}
 ```
 
 ## How to Run
@@ -109,6 +123,85 @@ ollama pull qwen2.5:7b
 
 The AI endpoints use this local model through Ollama.
 
+Make sure Ollama is running before using AI endpoints:
+
+```bash
+ollama serve
+```
+
+Default Ollama endpoint used by the backend:
+
+```text
+http://localhost:11434/api/generate
+```
+
+## Database
+
+The backend uses SQLite for local persistence.
+
+Stored data includes:
+
+- Folders
+- Study notes
+- Uploaded PDF documents
+- Extracted PDF text
+
+If the database schema changes during development, the local SQLite database file can be deleted and recreated automatically when the server restarts.
+
+## Example Folder Creation
+
+Endpoint:
+
+```text
+POST /folders
+```
+
+Request body:
+
+```json
+{
+  "name": "Mathematics"
+}
+```
+
+Example response:
+
+```json
+{
+  "id": 1,
+  "name": "Mathematics"
+}
+```
+
+## Example Note Creation With Folder
+
+Endpoint:
+
+```text
+POST /notes
+```
+
+Request body:
+
+```json
+{
+  "title": "Calculus - Power Series",
+  "content": "A power series is an infinite series written using powers of (x - a).",
+  "folder_id": 1
+}
+```
+
+Example response:
+
+```json
+{
+  "id": 1,
+  "title": "Calculus - Power Series",
+  "content": "A power series is an infinite series written using powers of (x - a).",
+  "folder_id": 1
+}
+```
+
 ## Example AI Summarization Request
 
 Endpoint:
@@ -121,7 +214,7 @@ Request body:
 
 ```json
 {
-  "text": "DFA is a deterministic finite automaton. It has states, transitions, an alphabet, a start state, and accept states."
+  "text": "A DFA is a deterministic finite automaton. It has states, transitions, an alphabet, a start state, and accept states."
 }
 ```
 
@@ -129,8 +222,8 @@ Example response:
 
 ```json
 {
-  "summary": "A DFA consists of states, transitions, an input alphabet, a starting state, and accept states.",
-  "original_text_length": 115
+  "summary": "- A DFA is a deterministic finite automaton.\n- It has states, transitions, an alphabet, a start state, and accept states.",
+  "original_text_length": 123
 }
 ```
 
@@ -155,7 +248,7 @@ Example response:
 
 ```json
 {
-  "quiz": "Question 1:\nWhat does a DFA recognize?\nAnswer: Regular languages.",
+  "quiz": "Question 1:\nWhat is a DFA used to recognize?\nAnswer: Regular languages.",
   "question_count": 3,
   "original_text_length": 78
 }
@@ -173,7 +266,7 @@ Request body:
 
 ```json
 {
-  "message": "Sadece NFA kısmını basit Türkçe anlat."
+  "message": "Summarize this note in simple English."
 }
 ```
 
@@ -181,9 +274,9 @@ Example response:
 
 ```json
 {
-  "note_id": 2,
-  "title": "Long DFA and NFA Study Notes",
-  "answer": "NFA, bir giriş sembolü için birden fazla olası geçişe sahip olabilir...",
+  "note_id": 1,
+  "title": "Calculus - Power Series",
+  "answer": "- A power series is an infinite series using powers of (x - a).\n- The center of the series is a.\n- The ratio test can help find the radius of convergence.",
   "message_length": 38,
   "context_length": 1850
 }
@@ -227,11 +320,11 @@ Example response:
   "filename": "example.pdf",
   "page_count": 6,
   "text_length": 8353,
-  "summary": "The PDF explains prompt requirements, grading expectations, and final checklist rules."
+  "summary": "- The PDF explains prompt requirements.\n- It includes grading expectations and checklist rules."
 }
 ```
 
-## Example PDF Document Upload
+## Example PDF Document Upload With Folder
 
 Endpoint:
 
@@ -241,14 +334,41 @@ POST /documents/upload-pdf
 
 This endpoint accepts a PDF file upload, extracts its text, and saves it as a document in the SQLite database.
 
+It also supports an optional `folder_id` form field.
+
 Example response:
 
 ```json
 {
   "id": 1,
   "filename": "MultiFacts Quick-Check Guidelines.pdf",
+  "folder_id": 1,
   "page_count": 6,
   "text_length": 8353
+}
+```
+
+## Example Move PDF Document To Folder
+
+Endpoint:
+
+```text
+PUT /documents/{document_id}/folder
+```
+
+Request body:
+
+```json
+{
+  "folder_id": 1
+}
+```
+
+To move a PDF document back to Uncategorized, send:
+
+```json
+{
+  "folder_id": null
 }
 ```
 
@@ -264,7 +384,7 @@ Request body:
 
 ```json
 {
-  "message": "Bu PDF'deki final checklist kısmını basitçe anlat."
+  "message": "Summarize the final checklist section in simple English."
 }
 ```
 
@@ -274,7 +394,7 @@ Example response:
 {
   "document_id": 1,
   "filename": "MultiFacts Quick-Check Guidelines.pdf",
-  "answer": "Final kontrol listesi, promptun yeterli sayıda gerçek içerdiğini, net olduğunu ve beklentilerin doğru yazıldığını kontrol etmeyi ister.",
+  "answer": "- The checklist helps verify that the prompt is clear.\n- It checks whether the expected answer is specific and complete.",
   "message_length": 58,
   "context_length": 8353
 }
@@ -285,6 +405,9 @@ Example response:
 Current version includes:
 
 - Notes CRUD API
+- Folder CRUD API
+- Folder assignment for notes and documents
+- PDF document folder update endpoint
 - SQLite database persistence
 - Local AI summarization with Ollama and Qwen2.5
 - AI quiz generation from text and saved notes
@@ -292,18 +415,21 @@ Current version includes:
 - PDF text extraction
 - PDF summarization
 - PDF document storage
+- PDF document deletion
 - Contextual chat with saved PDF documents
+- English-first AI response formatting
+- Plain-text formula output instead of LaTeX-style formatting
 - Swagger documentation
 - CORS support for the local frontend
 
 Planned next steps:
 
 - Save generated summaries and quizzes to the database
-- Add delete/update endpoints for saved documents
+- Save chat history to the backend
 - Add authentication
+- Add user accounts
 - Add Docker support
-- Improve response formatting for quiz outputs
-- Improve frontend README and deployment instructions
+- Add deployment configuration
 
 ## Related Repository
 
