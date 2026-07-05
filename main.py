@@ -2,14 +2,14 @@ from io import BytesIO
 import re
 
 import requests
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pypdf import PdfReader
 from sqlalchemy.orm import Session
 
 from database import SessionLocal, engine
-from models import Base, Document, Note
+from models import Base, Document, Folder, Note
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "qwen2.5:7b"
@@ -27,14 +27,29 @@ app.add_middleware(
 Base.metadata.create_all(bind=engine)
 
 
+class FolderCreate(BaseModel):
+    name: str
+
+
+
+class FolderUpdate(BaseModel):
+    name: str
+
+
+class DocumentFolderUpdate(BaseModel):
+    folder_id: int | None = None
+
+
 class NoteCreate(BaseModel):
     title: str
     content: str
+    folder_id: int | None = None
 
 
 class NoteUpdate(BaseModel):
     title: str
     content: str
+    folder_id: int | None = None
 
 
 class TextSummarizeRequest(BaseModel):
@@ -68,6 +83,16 @@ def clean_ai_response(text: str):
     return cleaned_text.strip()
 
 
+def validate_folder(folder_id: int | None, db: Session):
+    if folder_id is None:
+        return
+
+    folder = db.query(Folder).filter(Folder.id == folder_id).first()
+
+    if folder is None:
+        raise HTTPException(status_code=404, detail="Folder not found")
+
+
 def call_ollama(prompt: str):
     try:
         response = requests.post(
@@ -98,17 +123,17 @@ def generate_summary(text: str):
     prompt = f"""
 You are an AI study assistant.
 
-Summarize the following study material in a clear and short way.
-Use simple language.
+Summarize the following study material in clear, simple English.
 
 Rules:
+- Always answer in English.
 - Write a real summary, not a long rewritten version of the material.
 - Use maximum 5 bullet points.
 - Each bullet point must be 1 short sentence.
-- If the material is Turkish, answer in Turkish.
-- If the material is English, answer in English.
+- Keep technical terms in correct academic English.
+- Do not use LaTeX notation; write formulas in plain text.
 - Do not use Chinese, Japanese, Korean, Arabic, Cyrillic, or any non-Latin characters.
-- Avoid awkward literal translations.
+- Do not output random symbols or broken characters.
 
 Text:
 {text}
@@ -118,13 +143,18 @@ Text:
 
 def generate_quiz(text: str, question_count: int):
     prompt = f"""
-Create {question_count} quiz questions from the following study note.
+You are an AI study assistant.
+
+Create {question_count} quiz questions from the following study material.
 
 Rules:
+- Always answer in English.
 - Do not write an introduction.
 - Number the questions.
 - After each question, write the correct answer.
 - Keep the questions clear and short.
+- Use correct academic English.
+- Do not use LaTeX notation; write formulas in plain text like c_n * (x - a)^n.
 - Use this exact format:
 
 Question 1:
@@ -140,29 +170,18 @@ Text:
 
 
 def generate_chat_answer(message: str, context: str):
-    turkish_characters = "çğıöşüÇĞİÖŞÜ"
-    turkish_keywords = ["basit", "türkçe", "anlat", "açıkla", "sadece", "kısmı", "özet", "özetle"]
-
-    message_lower = message.lower()
-    should_answer_turkish = any(character in message for character in turkish_characters) or any(
-        keyword in message_lower for keyword in turkish_keywords
-    )
-
-    answer_language = "Turkish" if should_answer_turkish else "English"
-
     prompt = f"""
 You are an AI study assistant.
 
 CRITICAL OUTPUT RULES:
-- Answer language: {answer_language}.
-- If answer language is Turkish, write natural, clear, everyday Turkish.
-- Do NOT translate word-by-word from English to Turkish.
-- If a technical English word sounds more natural than a Turkish translation, keep the English word.
-- Do NOT use strange or literal translations.
-- Do NOT use Chinese, Japanese, Korean, Arabic, Cyrillic, or any non-Latin characters.
-- Do NOT translate any sentence into Chinese, Japanese, Korean, Arabic, or Cyrillic.
-- Do NOT output random symbols or broken characters.
-- Keep the answer very short, focused, and easy to understand.
+- Always answer in English unless the user explicitly asks for another language.
+- Use clear, natural, study-friendly English.
+- Keep the answer short, focused, and easy to understand.
+- Use correct academic terminology.
+- Do not use LaTeX notation; write formulas in plain text like c_n * (x - a)^n.
+- Do not translate technical terms awkwardly.
+- Do not use Chinese, Japanese, Korean, Arabic, Cyrillic, or any non-Latin characters.
+- Do not output random symbols or broken characters.
 - If the user asks for a summary, write a real summary, not a long rewritten version of the whole material.
 - For summaries, use maximum 5 bullet points.
 - Each bullet point must be 1 short sentence.
@@ -172,9 +191,7 @@ CONTENT RULES:
 - Do not add information that is not supported by the study material.
 - If the study material does not include enough information, say that clearly.
 - Answer the user's exact question.
-- Prefer clean bullet points.
-- Avoid awkward, literal, or unnatural Turkish translations.
-- In Turkish, use simple and general wording that fits the user's question instead of forcing specific terms from one topic.
+- Prefer clean bullet points when they make the answer easier to study.
 
 Study material:
 {context}
@@ -182,7 +199,7 @@ Study material:
 User question:
 {message}
 
-Final answer in {answer_language}:
+Final answer:
 """
     return call_ollama(prompt)
 
@@ -246,6 +263,64 @@ def chat_with_context(request: TextChatRequest):
     }
 
 
+# Folder endpoints
+@app.get("/folders")
+def get_folders(db: Session = Depends(get_db)):
+    folders = db.query(Folder).all()
+    return folders
+
+
+@app.post("/folders")
+def create_folder(folder: FolderCreate, db: Session = Depends(get_db)):
+    new_folder = Folder(name=folder.name)
+
+    db.add(new_folder)
+    db.commit()
+    db.refresh(new_folder)
+
+    return new_folder
+
+
+@app.put("/folders/{folder_id}")
+def update_folder(folder_id: int, updated_folder: FolderUpdate, db: Session = Depends(get_db)):
+    folder = db.query(Folder).filter(Folder.id == folder_id).first()
+
+    if folder is None:
+        raise HTTPException(status_code=404, detail="Folder not found")
+
+    folder.name = updated_folder.name
+
+    db.commit()
+    db.refresh(folder)
+
+    return folder
+
+
+@app.delete("/folders/{folder_id}")
+def delete_folder(folder_id: int, db: Session = Depends(get_db)):
+    folder = db.query(Folder).filter(Folder.id == folder_id).first()
+
+    if folder is None:
+        raise HTTPException(status_code=404, detail="Folder not found")
+
+    notes = db.query(Note).filter(Note.folder_id == folder_id).all()
+    documents = db.query(Document).filter(Document.folder_id == folder_id).all()
+
+    for note in notes:
+        note.folder_id = None
+
+    for document in documents:
+        document.folder_id = None
+
+    db.delete(folder)
+    db.commit()
+
+    return {
+        "message": "Folder deleted successfully",
+        "deleted_folder_id": folder_id,
+    }
+
+
 @app.post("/files/extract-pdf-text")
 async def extract_pdf_text(file: UploadFile = File(...)):
     if file.content_type != "application/pdf":
@@ -285,9 +360,15 @@ async def summarize_pdf(file: UploadFile = File(...)):
 
 # Document endpoints
 @app.post("/documents/upload-pdf")
-async def upload_pdf_as_document(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def upload_pdf_as_document(
+    file: UploadFile = File(...),
+    folder_id: int | None = Form(None),
+    db: Session = Depends(get_db),
+):
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+
+    validate_folder(folder_id, db)
 
     file_content = await file.read()
     pdf_reader, extracted_text = extract_text_from_pdf_content(file_content)
@@ -298,6 +379,7 @@ async def upload_pdf_as_document(file: UploadFile = File(...), db: Session = Dep
     new_document = Document(
         filename=file.filename,
         content=extracted_text,
+        folder_id=folder_id,
     )
 
     db.add(new_document)
@@ -307,6 +389,7 @@ async def upload_pdf_as_document(file: UploadFile = File(...), db: Session = Dep
     return {
         "id": new_document.id,
         "filename": new_document.filename,
+        "folder_id": new_document.folder_id,
         "page_count": len(pdf_reader.pages),
         "text_length": len(new_document.content),
     }
@@ -318,12 +401,34 @@ def get_documents(db: Session = Depends(get_db)):
     return documents
 
 
+
 @app.get("/documents/{document_id}")
 def get_document_by_id(document_id: int, db: Session = Depends(get_db)):
     document = db.query(Document).filter(Document.id == document_id).first()
 
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
+
+    return document
+
+
+@app.put("/documents/{document_id}/folder")
+def update_document_folder(
+    document_id: int,
+    updated_document: DocumentFolderUpdate,
+    db: Session = Depends(get_db),
+):
+    document = db.query(Document).filter(Document.id == document_id).first()
+
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    validate_folder(updated_document.folder_id, db)
+
+    document.folder_id = updated_document.folder_id
+
+    db.commit()
+    db.refresh(document)
 
     return document
 
@@ -363,6 +468,22 @@ def chat_with_document(document_id: int, request: TextChatRequest, db: Session =
     }
 
 
+@app.delete("/documents/{document_id}")
+def delete_document(document_id: int, db: Session = Depends(get_db)):
+    document = db.query(Document).filter(Document.id == document_id).first()
+
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    db.delete(document)
+    db.commit()
+
+    return {
+        "message": "Document deleted successfully",
+        "deleted_document_id": document_id,
+    }
+
+
 @app.get("/notes")
 def get_notes(db: Session = Depends(get_db)):
     notes = db.query(Note).all()
@@ -371,9 +492,11 @@ def get_notes(db: Session = Depends(get_db)):
 
 @app.post("/notes")
 def create_note(note: NoteCreate, db: Session = Depends(get_db)):
+    validate_folder(note.folder_id, db)
     new_note = Note(
         title=note.title,
         content=note.content,
+        folder_id=note.folder_id,
     )
 
     db.add(new_note)
@@ -453,8 +576,11 @@ def update_note(note_id: int, updated_note: NoteUpdate, db: Session = Depends(ge
     if note is None:
         raise HTTPException(status_code=404, detail="Note not found")
 
+    validate_folder(updated_note.folder_id, db)
+
     note.title = updated_note.title
     note.content = updated_note.content
+    note.folder_id = updated_note.folder_id
 
     db.commit()
     db.refresh(note)
