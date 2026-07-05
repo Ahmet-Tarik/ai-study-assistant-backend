@@ -1,4 +1,5 @@
 from io import BytesIO
+import re
 
 import requests
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
@@ -58,6 +59,15 @@ def get_db():
         db.close()
 
 
+def clean_ai_response(text: str):
+    blocked_unicode_pattern = r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0600-\u06ff\u0400-\u04ff]+"
+    cleaned_text = re.sub(blocked_unicode_pattern, "", text)
+    cleaned_text = cleaned_text.replace("回收中", "")
+    cleaned_text = cleaned_text.replace("请稍候", "")
+    cleaned_text = re.sub(r"\n{3,}", "\n\n", cleaned_text)
+    return cleaned_text.strip()
+
+
 def call_ollama(prompt: str):
     try:
         response = requests.post(
@@ -80,13 +90,25 @@ def call_ollama(prompt: str):
         )
 
     data = response.json()
-    return data.get("response", "")
+    raw_response = data.get("response", "")
+    return clean_ai_response(raw_response)
 
 
 def generate_summary(text: str):
     prompt = f"""
-Summarize the following study note in a clear and short way.
+You are an AI study assistant.
+
+Summarize the following study material in a clear and short way.
 Use simple language.
+
+Rules:
+- Write a real summary, not a long rewritten version of the material.
+- Use maximum 5 bullet points.
+- Each bullet point must be 1 short sentence.
+- If the material is Turkish, answer in Turkish.
+- If the material is English, answer in English.
+- Do not use Chinese, Japanese, Korean, Arabic, Cyrillic, or any non-Latin characters.
+- Avoid awkward literal translations.
 
 Text:
 {text}
@@ -119,7 +141,7 @@ Text:
 
 def generate_chat_answer(message: str, context: str):
     turkish_characters = "çğıöşüÇĞİÖŞÜ"
-    turkish_keywords = ["basit", "türkçe", "anlat", "açıkla", "sadece", "kısmı"]
+    turkish_keywords = ["basit", "türkçe", "anlat", "açıkla", "sadece", "kısmı", "özet", "özetle"]
 
     message_lower = message.lower()
     should_answer_turkish = any(character in message for character in turkish_characters) or any(
@@ -133,17 +155,26 @@ You are an AI study assistant.
 
 CRITICAL OUTPUT RULES:
 - Answer language: {answer_language}.
-- If answer language is Turkish, write ONLY with Turkish words and Latin alphabet.
+- If answer language is Turkish, write natural, clear, everyday Turkish.
+- Do NOT translate word-by-word from English to Turkish.
+- If a technical English word sounds more natural than a Turkish translation, keep the English word.
+- Do NOT use strange or literal translations.
 - Do NOT use Chinese, Japanese, Korean, Arabic, Cyrillic, or any non-Latin characters.
 - Do NOT translate any sentence into Chinese, Japanese, Korean, Arabic, or Cyrillic.
 - Do NOT output random symbols or broken characters.
-- Keep the answer short, focused, and easy to understand.
+- Keep the answer very short, focused, and easy to understand.
+- If the user asks for a summary, write a real summary, not a long rewritten version of the whole material.
+- For summaries, use maximum 5 bullet points.
+- Each bullet point must be 1 short sentence.
 
 CONTENT RULES:
 - Use only the provided study material as context.
 - Do not add information that is not supported by the study material.
 - If the study material does not include enough information, say that clearly.
 - Answer the user's exact question.
+- Prefer clean bullet points.
+- Avoid awkward, literal, or unnatural Turkish translations.
+- In Turkish, use simple and general wording that fits the user's question instead of forcing specific terms from one topic.
 
 Study material:
 {context}
