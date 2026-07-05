@@ -8,7 +8,7 @@ from pypdf import PdfReader
 from sqlalchemy.orm import Session
 
 from database import SessionLocal, engine
-from models import Base, Note
+from models import Base, Document, Note
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "qwen2.5:7b"
@@ -249,6 +249,86 @@ async def summarize_pdf(file: UploadFile = File(...)):
         "page_count": len(pdf_reader.pages),
         "text_length": len(extracted_text),
         "summary": summary,
+    }
+
+
+# Document endpoints
+@app.post("/documents/upload-pdf")
+async def upload_pdf_as_document(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    if file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+
+    file_content = await file.read()
+    pdf_reader, extracted_text = extract_text_from_pdf_content(file_content)
+
+    if not extracted_text.strip():
+        raise HTTPException(status_code=400, detail="No text could be extracted from this PDF")
+
+    new_document = Document(
+        filename=file.filename,
+        content=extracted_text,
+    )
+
+    db.add(new_document)
+    db.commit()
+    db.refresh(new_document)
+
+    return {
+        "id": new_document.id,
+        "filename": new_document.filename,
+        "page_count": len(pdf_reader.pages),
+        "text_length": len(new_document.content),
+    }
+
+
+@app.get("/documents")
+def get_documents(db: Session = Depends(get_db)):
+    documents = db.query(Document).all()
+    return documents
+
+
+@app.get("/documents/{document_id}")
+def get_document_by_id(document_id: int, db: Session = Depends(get_db)):
+    document = db.query(Document).filter(Document.id == document_id).first()
+
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    return document
+
+
+@app.post("/documents/{document_id}/summarize")
+def summarize_document_by_id(document_id: int, db: Session = Depends(get_db)):
+    document = db.query(Document).filter(Document.id == document_id).first()
+
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    summary = generate_summary(document.content)
+
+    return {
+        "document_id": document.id,
+        "filename": document.filename,
+        "summary": summary,
+        "original_text_length": len(document.content),
+    }
+
+
+@app.post("/documents/{document_id}/chat")
+def chat_with_document(document_id: int, request: TextChatRequest, db: Session = Depends(get_db)):
+    document = db.query(Document).filter(Document.id == document_id).first()
+
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    answer = generate_chat_answer(request.message, document.content)
+
+    return {
+        "document_id": document.id,
+        "filename": document.filename,
+        "answer": answer,
+        "message_length": len(request.message),
+        "context_length": len(document.content),
     }
 
 
