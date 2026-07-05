@@ -2,6 +2,7 @@ from io import BytesIO
 
 import requests
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pypdf import PdfReader
 from sqlalchemy.orm import Session
@@ -13,6 +14,14 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "qwen2.5:7b"
 
 app = FastAPI(title="AI Study Assistant Backend")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 Base.metadata.create_all(bind=engine)
 
@@ -34,6 +43,11 @@ class TextSummarizeRequest(BaseModel):
 class TextQuizRequest(BaseModel):
     text: str
     question_count: int = 5
+
+
+class TextChatRequest(BaseModel):
+    message: str
+    context: str = ""
 
 
 def get_db():
@@ -100,6 +114,26 @@ Text:
     return call_ollama(prompt)
 
 
+def generate_chat_answer(message: str, context: str):
+    prompt = f"""
+You are an AI study assistant.
+Answer only using the provided study material.
+Use the same language as the user's question.
+Use simple, clean, and clear language.
+Do not use unrelated symbols, Chinese/Japanese characters, or random text.
+Do not add information that is not supported by the study material.
+If the study material does not include enough information, say that clearly.
+Keep the answer focused on the user's question.
+
+Study material:
+{context}
+
+User question:
+{message}
+"""
+    return call_ollama(prompt)
+
+
 def extract_text_from_pdf_content(file_content: bytes):
     try:
         pdf_reader = PdfReader(BytesIO(file_content))
@@ -142,6 +176,20 @@ def generate_quiz_from_text(request: TextQuizRequest):
         "quiz": quiz,
         "question_count": request.question_count,
         "original_text_length": len(request.text),
+    }
+
+
+@app.post("/ai/chat")
+def chat_with_context(request: TextChatRequest):
+    if not request.context.strip():
+        raise HTTPException(status_code=400, detail="Context is required for this endpoint")
+
+    answer = generate_chat_answer(request.message, request.context)
+
+    return {
+        "answer": answer,
+        "message_length": len(request.message),
+        "context_length": len(request.context),
     }
 
 
@@ -244,6 +292,24 @@ def generate_quiz_from_note(note_id: int, question_count: int = 5, db: Session =
         "quiz": quiz,
         "question_count": question_count,
         "original_text_length": len(note.content),
+    }
+
+
+@app.post("/notes/{note_id}/chat")
+def chat_with_note(note_id: int, request: TextChatRequest, db: Session = Depends(get_db)):
+    note = db.query(Note).filter(Note.id == note_id).first()
+
+    if note is None:
+        raise HTTPException(status_code=404, detail="Note not found")
+
+    answer = generate_chat_answer(request.message, note.content)
+
+    return {
+        "note_id": note.id,
+        "title": note.title,
+        "answer": answer,
+        "message_length": len(request.message),
+        "context_length": len(note.content),
     }
 
 
