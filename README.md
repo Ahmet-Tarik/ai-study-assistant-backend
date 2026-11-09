@@ -400,6 +400,38 @@ Example response:
 }
 ```
 
+## Running Tests
+
+The test suite uses pytest and FastAPI's TestClient. Each test gets a fresh in-memory SQLite database, and the Ollama call is replaced by a fake, so the tests run offline without a model.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+pytest
+```
+
+The tests cover health, folder/note/document CRUD, folder validation, PDF upload and text extraction (including non-PDF, corrupt and text-less files), the AI endpoints' prompt construction, the Ollama client's error handling and response cleaning.
+
+## Running With Docker
+
+Ollama runs on the host machine; the container reaches it through `host.docker.internal`.
+
+```bash
+docker build -t ai-study-assistant-backend .
+docker run --rm -p 127.0.0.1:8000:8000 -v study-data:/app/data ai-study-assistant-backend
+```
+
+The API is then available at `http://localhost:8000/docs`. The SQLite database is stored in the `study-data` volume. The port is bound to `127.0.0.1` because the API has no authentication. `host.docker.internal` works out of the box with Docker Desktop (macOS/Windows); on Linux add `--add-host=host.docker.internal:host-gateway`.
+
+Configuration (environment variables):
+
+| Variable | Default |
+|---|---|
+| `DATABASE_URL` | `sqlite:///./notes.db` (Docker: `sqlite:////app/data/notes.db`) |
+| `OLLAMA_URL` | `http://localhost:11434/api/generate` (Docker: `http://host.docker.internal:11434/api/generate`) |
+| `OLLAMA_MODEL` | `qwen2.5:7b` |
+
 ## Project Status
 
 Current version includes:

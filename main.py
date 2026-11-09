@@ -1,4 +1,5 @@
 from io import BytesIO
+import os
 import re
 
 import requests
@@ -11,8 +12,8 @@ from sqlalchemy.orm import Session
 from database import SessionLocal, engine
 from models import Base, Document, Folder, Note
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "qwen2.5:7b"
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
 
 app = FastAPI(title="AI Study Assistant Backend")
 
